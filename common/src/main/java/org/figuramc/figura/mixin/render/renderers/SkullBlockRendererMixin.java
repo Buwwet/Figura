@@ -20,6 +20,7 @@ import org.figuramc.figura.ducks.SkullBlockRendererAccessor;
 import org.figuramc.figura.lua.api.entity.EntityAPI;
 import org.figuramc.figura.lua.api.world.BlockStateAPI;
 import org.figuramc.figura.lua.api.world.ItemStackAPI;
+import org.figuramc.figura.access.ISkullBlockMixin;
 import org.figuramc.figura.permissions.Permissions;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -36,13 +37,21 @@ public abstract class SkullBlockRendererMixin implements BlockEntityRenderer<Sku
     @Unique
     private static SkullBlockEntity block;
 
+    @Unique
+    // profile.getName() gets lowercase'd after the GameProfile manager finds out that there is no player with such name.
+    // We store it here before that happens.
+    private static String skullOwner;
+
     @Inject(at = @At("HEAD"), method = "renderSkull", cancellable = true)
     private static void renderSkull(Direction direction, float yaw, float animationProgress, PoseStack stack, MultiBufferSource bufferSource, int light, SkullModelBase model, RenderType renderLayer, CallbackInfo ci) {
+
+
         // parse block and items first, so we can yeet them in case of a missed event
         SkullBlockEntity localBlock = block;
         block = null;
 
         ItemStack localItem = SkullBlockRendererAccessor.getItem();
+
         SkullBlockRendererAccessor.setItem(null);
 
         Entity localEntity = SkullBlockRendererAccessor.getEntity();
@@ -81,9 +90,22 @@ public abstract class SkullBlockRendererMixin implements BlockEntityRenderer<Sku
         FiguraMod.popProfiler(5);
     }
 
+    @Inject(at = @At("HEAD"), method = "render(Lnet/minecraft/world/level/block/entity/SkullBlockEntity;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II)V")
+    public void pre_render(SkullBlockEntity skullBlockEntity, float f, PoseStack poseStack, MultiBufferSource multiBufferSource, int i, int j, CallbackInfo ci) {
+        block = skullBlockEntity;
+
+        // Get the skull owner of the soon to be rendered head.
+        ISkullBlockMixin skull = (ISkullBlockMixin) block;
+        skullOwner = skull.getSkullOwner();
+        if (block.getOwnerProfile() != null) {
+            skull.setSkullOwner(block.getOwnerProfile().getName());
+        }
+    }
+
     @Inject(at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/blockentity/SkullBlockRenderer;renderSkull(Lnet/minecraft/core/Direction;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;ILnet/minecraft/client/model/SkullModelBase;Lnet/minecraft/client/renderer/RenderType;)V"), method = "render(Lnet/minecraft/world/level/block/entity/SkullBlockEntity;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;II)V")
     public void render(SkullBlockEntity skullBlockEntity, float f, PoseStack poseStack, MultiBufferSource multiBufferSource, int i, int j, CallbackInfo ci) {
         block = skullBlockEntity;
+
         SkullBlockRendererAccessor.setRenderMode(SkullBlockRendererAccessor.SkullRenderMode.BLOCK);
     }
 
@@ -95,6 +117,22 @@ public abstract class SkullBlockRendererMixin implements BlockEntityRenderer<Sku
 
     @Inject(at = @At("HEAD"), method = "getRenderType")
     private static void getRenderType(SkullBlock.Type type, GameProfile profile, CallbackInfoReturnable<RenderType> cir) {
-        avatar = (profile != null && profile.getId() != null) ? AvatarManager.getAvatarForPlayer(profile.getId()) : null;
+
+
+        if (profile != null) {
+            // Load the avatar from our local directory if it matches an avatar name
+            if (skullOwner == null && profile.getName() != null) {
+                avatar = AvatarManager.getAvatarForSkull(profile.getName());
+            } else {
+                avatar = AvatarManager.getAvatarForSkull(profile.getName());
+            }
+
+            // If it doesn't exist that means that we should access the backend, as this skull might belong to a player
+            if (avatar == null && profile.getId() != null) {
+                avatar = AvatarManager.getAvatarForPlayer(profile.getId());
+            }
+        }
+
+        skullOwner = null;
     }
 }
