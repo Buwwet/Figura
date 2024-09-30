@@ -18,11 +18,9 @@ import org.figuramc.figura.gui.FiguraToast;
 import org.figuramc.figura.gui.widgets.lists.AvatarList;
 import org.figuramc.figura.lua.api.particle.ParticleAPI;
 import org.figuramc.figura.lua.api.sound.SoundAPI;
-import org.figuramc.figura.utils.EntityUtils;
-import org.figuramc.figura.utils.FiguraClientCommandSource;
-import org.figuramc.figura.utils.FiguraResourceListener;
-import org.figuramc.figura.utils.FiguraText;
+import org.figuramc.figura.utils.*;
 
+import java.io.File;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,8 +34,12 @@ import java.util.function.Consumer;
 public class AvatarManager {
 
     private static final Map<UUID, UserData> LOADED_USERS = new ConcurrentHashMap<>();
-    private static final Set<UUID> FETCHED_USERS = new HashSet<>();
 
+    private static final Map<String, UUID> LOADED_LOCAL_SKULLS = new ConcurrentHashMap<>();
+    // Store all the skulls that do not point to an avatar.
+    private static final Set<String> BLACKLISTED_SKULL_LOCATIONS = new HashSet<>();
+
+    private static final Set<UUID> FETCHED_USERS = new HashSet<>();
     private static final Map<Entity, Avatar> LOADED_CEM = new ConcurrentHashMap<>();
 
     public static final FiguraResourceListener RESOURCE_RELOAD_EVENT = FiguraResourceListener.createResourceListener("resource_reload_event", manager -> executeAll("resourceReloadEvent", Avatar::resourceReloadEvent));
@@ -145,6 +147,48 @@ public class AvatarManager {
         return nbt == null ? null : loadEntityAvatar(entity, nbt);
     }
 
+    // Load an avatar that is in the avatars/ dir
+    public static Avatar getAvatarForSkull(String avatar_path) {
+        if (avatar_path == null) {
+            return null;
+        }
+        // Check the blacklist before making expensive system checks
+        if (BLACKLISTED_SKULL_LOCATIONS.contains(avatar_path)) {
+            return null;
+        }
+
+        // Return the already loaded avatar if it exists.
+        if (LOADED_LOCAL_SKULLS.containsKey(avatar_path)) {
+            UUID uuid = LOADED_LOCAL_SKULLS.get(avatar_path);
+            if (LOADED_USERS.containsKey(uuid)) {
+                Avatar loaded = LOADED_USERS.get(uuid).getMainAvatar();
+                // May be null if it's currently being processed
+                return loaded;
+            }
+        }
+
+        // Check if the path is a valid avatar.
+        Path path = IOUtils.getOrCreateDir(FiguraMod.getFiguraDirectory(), "avatars").resolve(avatar_path);
+        File file = new File(String.valueOf(path));
+        if (!file.isDirectory()) {
+            // Skull does not exist. We shouldn't retry searching here
+            BLACKLISTED_SKULL_LOCATIONS.add(avatar_path);
+            return null;
+        }
+
+        // Time to load the avatar
+        // Calculate the new uuid from the avatar path
+        UUID uuid = UUID.nameUUIDFromBytes(avatar_path.getBytes());
+
+        UserData dummyUserdata = new UserData(uuid);
+        LocalAvatarLoader.loadAvatar(path, dummyUserdata);
+
+        LOADED_USERS.put(uuid, dummyUserdata);
+        LOADED_LOCAL_SKULLS.put(avatar_path, uuid);
+
+        return dummyUserdata.getMainAvatar();
+    }
+
     // tries to get data from an entity
     public static Avatar getAvatar(Entity entity) {
         if (panic || Minecraft.getInstance().level == null || entity == null)
@@ -199,7 +243,7 @@ public class AvatarManager {
     public static void clearCEMAvatars() {
         for (Avatar avatar : LOADED_CEM.values())
             avatar.clean();
-        LOADED_CEM.clear();
+            LOADED_CEM.clear();
     }
 
     // clears ALL loaded avatars, including local
@@ -208,6 +252,9 @@ public class AvatarManager {
             clearAvatars(id);
 
         LOADED_USERS.clear();
+        BLACKLISTED_SKULL_LOCATIONS.clear();
+        LOADED_LOCAL_SKULLS.clear();
+
         FETCHED_USERS.clear();
         clearCEMAvatars();
 

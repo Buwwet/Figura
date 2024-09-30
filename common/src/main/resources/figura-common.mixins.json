@@ -22,6 +22,7 @@
     "SkullBlockEntityAccessor",
     "SNIHelperMixin",
     "TextDisplayMixin",
+    "SkullBlockEntityMixin",
     "compat.GeckolibGeoArmorRendererMixin",
     "compat.GeckolibGeoRendererMixin",
     "compat.SimpleVCMixin",
